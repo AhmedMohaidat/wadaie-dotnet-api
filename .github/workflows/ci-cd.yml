@@ -173,11 +173,10 @@ jobs:
           echo "Check the automation test repository for results"
           echo "API URL: http://localhost:5000"
 
-      - name: Navigate to project dir
-        run: cd /home/runner/work/wadaie-dotnet-api/wadaie-dotnet-api
+  steps:
+    - name: Clone automation repo
+      run: git clone https://github.com/AhmedMohaidat/tests.git
 
-      - name: Clone automation repo
-        run: git clone https://github.com/AhmedMohaidat/tests.git
-
-      - name: Run automation test
-        run:  mvn clean install -Dfile="src/test/resources/TestSuites/regressionTest.xml"
+    - name: Run automation test
+      working-directory: ./tests
+      run: mvn clean install -Dfile="src/test/resources/TestSuites/regressionTest.xml"
