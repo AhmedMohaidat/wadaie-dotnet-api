@@ -79,6 +79,9 @@ jobs:
           path: ./publish/
           retention-days: 1
 
+      - name: Install Entity Framework tools
+        run: dotnet tool install --global dotnet-ef
+
       - name: Run database migrations
         run: |
           echo "Running database migrations..."
