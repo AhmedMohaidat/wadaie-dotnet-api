@@ -144,3 +144,31 @@ jobs:
 
     outputs:
       app-status: success
+
+  # Stage 2: Trigger External Automation Tests
+  trigger-automation-tests:
+    name: Trigger External REST Assured Tests
+    runs-on: ubuntu-latest
+    needs: build-and-deploy
+    if: needs.build-and-deploy.result == 'success'
+
+    steps:
+      - name: Trigger automation tests in external repository
+        uses: peter-evans/repository-dispatch@v2
+        with:
+          token: ${{ secrets.AUTOMATION_REPO_TOKEN }}
+          repository: https://github.com/AhmedMohaidat/tests
+          event-type: api-deployment-complete
+          client-payload: |
+            {
+              "api_url": "http://localhost:5000",
+              "branch": "${{ github.ref_name }}",
+              "commit_sha": "${{ github.sha }}",
+              "api_version": "${{ github.run_number }}"
+            }
+
+      - name: Wait for test results (optional)
+        run: |
+          echo "✅ Automation tests triggered in external repository"
+          echo "Check the automation test repository for results"
+          echo "API URL: http://localhost:5000"
