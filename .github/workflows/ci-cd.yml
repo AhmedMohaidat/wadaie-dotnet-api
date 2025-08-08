@@ -58,8 +58,8 @@ jobs:
 
       - name: Publish application
         run: |
-          # Publish the TimeDepositAPI application
-          dotnet publish TimeDepositAPI/TimeDepositAPI.csproj \
+          # Publish the TimeDepositAPI application (project file is in root)
+          dotnet publish TimeDepositAPI.csproj \
             --configuration Release \
             --output ./publish \
             --no-restore --no-build
@@ -109,4 +109,3 @@ jobs:
 
     outputs:
       app-status: success
-
