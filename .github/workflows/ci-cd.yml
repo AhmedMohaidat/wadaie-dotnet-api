@@ -173,6 +173,8 @@ jobs:
           echo "Check the automation test repository for results"
           echo "API URL: http://localhost:5000"
 
-      - name: Run regression test
+      - name: Clone automation repo
         run: git clone https://github.com/AhmedMohaidat/tests.git
-             mvn clean install -Dfile="src/test/resources/TestSuites/regressionTest.xml"
+
+      - name: Run automation test
+        run:  mvn clean install -Dfile="src/test/resources/TestSuites/regressionTest.xml"
