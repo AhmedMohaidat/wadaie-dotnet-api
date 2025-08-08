@@ -9,7 +9,7 @@ on:
 jobs:
   # Stage 1: Build and Start .NET Application
   build-and-deploy:
-    name: Build and Start .NET Application
+    name: Build and Start Time Deposit API
     runs-on: ubuntu-latest
 
     services:
@@ -147,7 +147,7 @@ jobs:
 
   # Stage 2: Trigger External Automation Tests
   trigger-automation-tests:
-    name: Trigger External REST Assured Tests
+    name: API regression test
     runs-on: ubuntu-latest
     needs: build-and-deploy
     if: needs.build-and-deploy.result == 'success'
