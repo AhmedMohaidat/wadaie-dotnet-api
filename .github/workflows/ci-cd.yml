@@ -173,6 +173,9 @@ jobs:
           echo "Check the automation test repository for results"
           echo "API URL: http://localhost:5000"
 
+      - name: Navigate to project dir
+        run: cd /home/runner/work/wadaie-dotnet-api/wadaie-dotnet-api
+
       - name: Clone automation repo
         run: git clone https://github.com/AhmedMohaidat/tests.git
 
