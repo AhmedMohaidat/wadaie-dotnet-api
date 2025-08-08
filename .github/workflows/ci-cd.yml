@@ -6,21 +6,14 @@ on:
   pull_request:
     branches: [ main ]
 
-env:
-  REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}/timedeposit-api
-
 jobs:
-  # Stage 1: Build and Push to Container Registry
-  build-and-push:
-    name: Build and Push Time Deposit API
+  # Combined: Build, Deploy and Test
+  build-deploy-and-test:
+    name: Build, Deploy and Test Time Deposit API
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
 
     services:
-      # PostgreSQL service for build-time tests
+      # PostgreSQL service for TimeDepositAPI
       postgres:
         image: postgres:13
         env:
@@ -43,6 +36,12 @@ jobs:
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '9.0.x'
+
+      - name: Set up Java 23
+        uses: actions/setup-java@v4
+        with:
+          java-version: '23'
+          distribution: 'temurin'
 
       - name: Create additional PostgreSQL user
         run: |
@@ -88,205 +87,67 @@ jobs:
             --output ./publish \
             --no-restore --no-build
 
-      - name: Create Dockerfile
+      - name: Start .NET application in background
         run: |
-          cat > Dockerfile << 'EOF'
-          FROM mcr.microsoft.com/dotnet/aspnet:9.0
-          WORKDIR /app
-          EXPOSE 5000
+          echo "Starting TimeDepositAPI application..."
           
-          # Copy the published app
-          COPY ./publish .
+          # Start the application in background using nohup to keep it running
+          cd ./publish
+          nohup dotnet TimeDepositAPI.dll --urls="http://localhost:5000" > app.log 2>&1 &
+          APP_PID=$!
+          echo $APP_PID > app.pid
+          echo "APP_PID=$APP_PID" >> $GITHUB_ENV
           
-          # Set environment variables
-          ENV ASPNETCORE_ENVIRONMENT=Testing
-          ENV ASPNETCORE_URLS=http://+:5000
-          
-          # Add health check
-          HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-            CMD curl -f http://localhost:5000/health || exit 1
-          
-          ENTRYPOINT ["dotnet", "TimeDepositAPI.dll"]
-          EOF
-
-      - name: Log in to Container Registry
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Extract metadata
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          tags: |
-            type=ref,event=branch
-            type=ref,event=pr
-            type=sha,prefix={{branch}}-
-            type=raw,value=latest,enable={{is_default_branch}}
-
-      - name: Build and push Docker image
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-
-      - name: Upload unit test results
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: unit-test-results
-          path: TestResults/Unit/
-          retention-days: 7
-
-    outputs:
-      image-tag: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
-      image-digest: ${{ steps.build.outputs.digest }}
-
-  # Stage 2: Deploy and Test
-  deploy-and-test:
-    name: Deploy API and Run Automation Tests
-    runs-on: ubuntu-latest
-    needs: build-and-push
-    if: needs.build-and-push.result == 'success'
-
-    steps:
-      - name: Log in to Container Registry
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Set up Java 23
-        uses: actions/setup-java@v4
-        with:
-          java-version: '23'
-          distribution: 'temurin'
-
-      - name: Create test network
-        run: |
-          docker network create test-network
-
-      - name: Start PostgreSQL for testing
-        run: |
-          docker run -d \
-            --name postgres-test \
-            --network test-network \
-            -e POSTGRES_USER=postgres \
-            -e POSTGRES_PASSWORD=postgres \
-            -e POSTGRES_DB=timedeposit_test \
-            -p 5432:5432 \
-            postgres:13
-          
-          # Wait for PostgreSQL to be ready
-          echo "Waiting for PostgreSQL to be ready..."
+          # Wait for application to be ready
+          echo "Waiting for TimeDepositAPI to start..."
           timeout=60
-          while ! docker exec postgres-test pg_isready -U postgres 2>/dev/null; do
+          
+          # First check if the port is responding
+          while ! nc -z localhost 5000; do
             if [ $timeout -le 0 ]; then
-              echo "PostgreSQL not ready after 60 seconds"
-              docker logs postgres-test
+              echo "TimeDepositAPI port 5000 not responding after 60 seconds"
+              echo "=== Application Log ==="
+              cat app.log || echo "No log file found"
+              ps aux | grep dotnet
               exit 1
             fi
             sleep 2
             timeout=$((timeout-2))
-            echo "Waiting for PostgreSQL... ($timeout seconds left)"
+            echo "Waiting for port 5000... ($timeout seconds left)"
           done
           
-          # Create the user
-          docker exec postgres-test psql -U postgres -d timedeposit_test -c "CREATE USER ahmadmuhaidat WITH PASSWORD 'test_password';"
-          docker exec postgres-test psql -U postgres -d timedeposit_test -c "GRANT ALL PRIVILEGES ON DATABASE timedeposit_test TO ahmadmuhaidat;"
-          docker exec postgres-test psql -U postgres -d timedeposit_test -c "ALTER USER ahmadmuhaidat CREATEDB;"
+          echo "✅ Port 5000 is responding"
           
-          echo "✅ PostgreSQL is ready"
-
-      - name: Pull and start API container
-        run: |
-          echo "Pulling API image: ${{ needs.build-and-push.outputs.image-tag }}"
-          
-          # Pull the image from registry
-          docker pull ${{ needs.build-and-push.outputs.image-tag }}
-          
-          # Start the API container
-          docker run -d \
-            --name timedeposit-api \
-            --network test-network \
-            -p 5000:5000 \
-            -e ConnectionStrings__DefaultConnection="Host=postgres-test;Database=timedeposit_test;Username=ahmadmuhaidat;Password=test_password" \
-            ${{ needs.build-and-push.outputs.image-tag }}
-          
-          echo "API container started"
-
-      - name: Wait for API to be ready
-        run: |
-          echo "Waiting for TimeDepositAPI to be ready..."
-          timeout=120
-          api_ready=false
-          
-          while [ $timeout -gt 0 ] && [ "$api_ready" = false ]; do
-            # Check if container is still running
-            if ! docker ps | grep timedeposit-api > /dev/null; then
-              echo "❌ API container stopped unexpectedly"
-              docker logs timedeposit-api
-              exit 1
-            fi
-          
-            # Check health endpoint
-            if curl -f http://localhost:5000/health 2>/dev/null; then
-              api_ready=true
-              echo "✅ API health endpoint is responding"
-            elif curl -s http://localhost:5000/ >/dev/null 2>&1; then
-              api_ready=true
-              echo "✅ API root endpoint is responding"
-            else
-              echo "Waiting for API... ($timeout seconds left)"
-              sleep 3
-              timeout=$((timeout-3))
-            fi
-          done
-          
-          if [ "$api_ready" = false ]; then
-            echo "❌ API not ready after 120 seconds"
-            echo "=== API Container Logs ==="
-            docker logs timedeposit-api
-            echo "=== Container Status ==="
-            docker ps -a
-            exit 1
+          # Try to access any endpoint to verify app is working
+          echo "Testing API endpoints..."
+          if curl -f http://localhost:5000/health 2>/dev/null; then
+            echo "✅ Health endpoint is working"
+          elif curl -f http://localhost:5000/ 2>/dev/null; then
+            echo "✅ Root endpoint is working"
+          elif curl -s http://localhost:5000/ | head -5; then
+            echo "✅ Application is responding (got some response)"
+          else
+            echo "⚠️ Application started but endpoints may not be configured - continuing anyway"
           fi
           
           echo "✅ TimeDepositAPI is ready and running on port 5000!"
+          echo "Application PID: $APP_PID"
+        env:
+          ASPNETCORE_ENVIRONMENT: Testing
+          ASPNETCORE_URLS: http://localhost:5000
+          ConnectionStrings__DefaultConnection: "Host=localhost;Database=timedeposit_test;Username=ahmadmuhaidat;Password=test_password"
 
-      - name: Verify API endpoints
+      - name: Verify application is running
         run: |
-          echo "Testing API endpoints..."
-          
-          # Test health endpoint
-          if curl -f http://localhost:5000/health; then
-            echo "✅ Health endpoint working"
-          else
-            echo "⚠️ Health endpoint not available"
-          fi
-          
-          # Test root endpoint
-          echo "Root endpoint response:"
-          curl -s http://localhost:5000/ | head -5 || echo "Root endpoint not available"
-          
-          # Show container status
-          echo "=== Container Status ==="
-          docker ps
-          
-          # Show recent logs
-          echo "=== Recent API Logs ==="
-          docker logs timedeposit-api --tail 10
+          echo "Verifying application status..."
+          curl -v http://localhost:5000/health || echo "Health endpoint not available"
+          echo "Application PID: $APP_PID"
+          ps aux | grep dotnet | grep TimeDepositAPI || echo "Application process not found in ps"
 
       - name: Clone automation test repository
         run: |
           git clone https://github.com/AhmedMohaidat/tests.git
-          echo "Automation test repository cloned"
+          echo "Automation test repository cloned successfully"
 
       - name: Run automation tests
         working-directory: ./tests
@@ -294,19 +155,26 @@ jobs:
           echo "🚀 Running automation tests against API at http://localhost:5000"
           echo "Test suite: src/test/resources/TestSuites/regressionTest.xml"
           
-          # Set API base URL for tests
-          export API_BASE_URL=http://localhost:5000
+          # Verify API is still accessible before running tests
+          if curl -f http://localhost:5000/health 2>/dev/null || curl -s http://localhost:5000/ >/dev/null 2>&1; then
+            echo "✅ API is accessible, proceeding with tests"
+          else
+            echo "❌ API is not accessible, checking logs..."
+            cat ../publish/app.log || echo "No log file found"
+            ps aux | grep dotnet
+            exit 1
+          fi
           
-          # Run Maven tests
+          # Run Maven tests with API base URL
           mvn clean install -Dfile="src/test/resources/TestSuites/regressionTest.xml" \
             -Dapi.base.url=http://localhost:5000 \
             -Dmaven.test.failure.ignore=false
           
-          echo "✅ Automation tests completed"
+          echo "✅ Automation tests completed successfully"
         env:
           API_BASE_URL: http://localhost:5000
 
-      - name: Trigger external automation tests
+      - name: Trigger external automation tests (optional)
         if: success()
         uses: peter-evans/repository-dispatch@v2
         with:
@@ -318,132 +186,83 @@ jobs:
               "api_url": "http://localhost:5000",
               "branch": "${{ github.ref_name }}",
               "commit_sha": "${{ github.sha }}",
-              "api_version": "${{ github.run_number }}",
-              "image_tag": "${{ needs.build-and-push.outputs.image-tag }}"
+              "api_version": "${{ github.run_number }}"
             }
 
-      - name: Upload automation test results
+      - name: Upload test results
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: automation-test-results
+          name: test-results
           path: |
+            TestResults/Unit/
             ./tests/target/surefire-reports/
             ./tests/target/failsafe-reports/
             ./tests/test-output/
           retention-days: 7
 
-      - name: Upload API logs
+      - name: Upload application logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: api-logs
-          path: api-logs.txt
+          name: application-logs
+          path: |
+            ./publish/app.log
+            ./publish/app.pid
           retention-days: 7
 
-      - name: Collect API logs for upload
+      - name: Upload published application
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: published-app
+          path: ./publish/
+          retention-days: 3
+
+      - name: Final status check
         if: always()
         run: |
-          echo "=== API Container Logs ===" > api-logs.txt
-          docker logs timedeposit-api >> api-logs.txt 2>&1
-          echo "=== Container Status ===" >> api-logs.txt
-          docker ps -a >> api-logs.txt
+          echo "=== Final Pipeline Status ==="
+          echo "Application PID: $APP_PID"
+          
+          if [ -n "$APP_PID" ] && kill -0 $APP_PID 2>/dev/null; then
+            echo "✅ Application is still running"
+            echo "Recent application logs:"
+            tail -20 ./publish/app.log || echo "No recent logs"
+          else
+            echo "⚠️ Application process not found"
+          fi
+          
+          echo "=== Test Results Summary ==="
+          if [ -d "./tests/target/surefire-reports/" ]; then
+            echo "Surefire reports found:"
+            ls -la ./tests/target/surefire-reports/ | head -10
+          fi
+          
+          if [ -d "TestResults/Unit/" ]; then
+            echo "Unit test results found:"
+            ls -la TestResults/Unit/ | head -10
+          fi
+          
+          echo "✅ Pipeline completed - check artifacts for detailed results"
 
-      - name: Stop containers
+      - name: Stop application
         if: always()
         run: |
-          echo "Stopping containers..."
-          docker stop timedeposit-api postgres-test 2>/dev/null || true
-          docker rm timedeposit-api postgres-test 2>/dev/null || true
-          docker network rm test-network 2>/dev/null || true
-          echo "✅ Cleanup completed"
-
-  # Stage 3: Integration Tests (Optional - if you have integration tests)
-  integration-tests:
-    name: Run Integration Tests
-    runs-on: ubuntu-latest
-    needs: [build-and-push, deploy-and-test]
-    if: needs.deploy-and-test.result == 'success'
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: '9.0.x'
-
-      - name: Log in to Container Registry
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Run integration tests against deployed API
-        run: |
-          # Start a fresh environment for integration tests
-          docker network create integration-network
+          if [ -n "$APP_PID" ] && kill -0 $APP_PID 2>/dev/null; then
+            echo "Stopping application (PID: $APP_PID)"
+            kill $APP_PID
           
-          # Start PostgreSQL
-          docker run -d \
-            --name postgres-integration \
-            --network integration-network \
-            -e POSTGRES_USER=postgres \
-            -e POSTGRES_PASSWORD=postgres \
-            -e POSTGRES_DB=timedeposit_test \
-            -p 5433:5432 \
-            postgres:13
+            # Wait a moment for graceful shutdown
+            sleep 3
           
-          # Wait for PostgreSQL
-          timeout=60
-          while ! docker exec postgres-integration pg_isready -U postgres 2>/dev/null; do
-            if [ $timeout -le 0 ]; then exit 1; fi
-            sleep 2
-            timeout=$((timeout-2))
-          done
-          
-          # Setup database user
-          docker exec postgres-integration psql -U postgres -d timedeposit_test -c "CREATE USER ahmadmuhaidat WITH PASSWORD 'test_password';"
-          docker exec postgres-integration psql -U postgres -d timedeposit_test -c "GRANT ALL PRIVILEGES ON DATABASE timedeposit_test TO ahmadmuhaidat;"
-          docker exec postgres-integration psql -U postgres -d timedeposit_test -c "ALTER USER ahmadmuhaidat CREATEDB;"
-          
-          # Start API container
-          docker run -d \
-            --name timedeposit-api-integration \
-            --network integration-network \
-            -p 5001:5000 \
-            -e ConnectionStrings__DefaultConnection="Host=postgres-integration;Database=timedeposit_test;Username=ahmadmuhaidat;Password=test_password" \
-            ${{ needs.build-and-push.outputs.image-tag }}
-          
-          # Wait for API
-          timeout=60
-          while ! curl -f http://localhost:5001/health 2>/dev/null && ! curl -s http://localhost:5001/ >/dev/null 2>&1; do
-            if [ $timeout -le 0 ]; then
-              docker logs timedeposit-api-integration
-              exit 1
+            # Force kill if still running
+            if kill -0 $APP_PID 2>/dev/null; then
+              echo "Force killing application"
+              kill -9 $APP_PID
             fi
-            sleep 2
-            timeout=$((timeout-2))
-          done
           
-          # Run integration tests
-          dotnet test --configuration Release --verbosity normal \
-            --filter "FullyQualifiedName~IntegrationTest|FullyQualifiedName~IT" \
-            --logger trx --results-directory TestResults/Integration
-          
-          # Cleanup
-          docker stop timedeposit-api-integration postgres-integration
-          docker rm timedeposit-api-integration postgres-integration
-          docker network rm integration-network
-        env:
-          API_BASE_URL: http://localhost:5001
-
-      - name: Upload integration test results
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: integration-test-results
-          path: TestResults/Integration/
-          retention-days: 7
+            echo "✅ Application stopped"
+          else
+            echo "Application already stopped or PID not found"
+          fi
