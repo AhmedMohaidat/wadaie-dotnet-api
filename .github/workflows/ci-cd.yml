@@ -43,9 +43,9 @@ jobs:
           # Wait for postgres to be ready
           sleep 10
           # Create the user that your app expects
-          PGPASSWORD=postgres psql -h localhost -U postgres -d timedeposit_test -c "CREATE USER mohammedmohaidat WITH PASSWORD 'test_password';"
-          PGPASSWORD=postgres psql -h localhost -U postgres -d timedeposit_test -c "GRANT ALL PRIVILEGES ON DATABASE timedeposit_test TO mohammedmohaidat;"
-          PGPASSWORD=postgres psql -h localhost -U postgres -d timedeposit_test -c "ALTER USER mohammedmohaidat CREATEDB;"  # Updated to .NET 9
+          PGPASSWORD=postgres psql -h localhost -U postgres -d timedeposit_test -c "CREATE USER ahmadmuhaidat WITH PASSWORD 'test_password';"
+          PGPASSWORD=postgres psql -h localhost -U postgres -d timedeposit_test -c "GRANT ALL PRIVILEGES ON DATABASE timedeposit_test TO ahmadmuhaidat;"
+          PGPASSWORD=postgres psql -h localhost -U postgres -d timedeposit_test -c "ALTER USER ahmadmuhaidat CREATEDB;"  # Updated to .NET 9
 
       - name: Cache NuGet packages
         uses: actions/cache@v4
@@ -133,7 +133,7 @@ jobs:
           ASPNETCORE_ENVIRONMENT: Testing
           ASPNETCORE_URLS: http://localhost:5000
           # Use the custom user your app expects
-          ConnectionStrings__DefaultConnection: "Host=localhost;Database=timedeposit_test;Username=mohammedmohaidat;Password=test_password"
+          ConnectionStrings__DefaultConnection: "Host=localhost;Database=timedeposit_test;Username=ahmadmuhaidat;Password=test_password"
 
       - name: Verify application is running
         run: |
