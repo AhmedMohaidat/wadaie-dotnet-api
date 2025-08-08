@@ -17,9 +17,10 @@ jobs:
       postgres:
         image: postgres:13
         env:
-          POSTGRES_USER: mohammedmohaidat
-          POSTGRES_PASSWORD: test_password
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
           POSTGRES_DB: timedeposit_test
+          # Create additional user
         options: >-
           --health-cmd pg_isready
           --health-interval 10s
@@ -35,7 +36,16 @@ jobs:
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: '9.0.x'  # Updated to .NET 9
+          dotnet-version: '9.0.x'
+
+      - name: Create additional PostgreSQL user
+        run: |
+          # Wait for postgres to be ready
+          sleep 10
+          # Create the user that your app expects
+          PGPASSWORD=postgres psql -h localhost -U postgres -d timedeposit_test -c "CREATE USER mohammedmohaidat WITH PASSWORD 'test_password';"
+          PGPASSWORD=postgres psql -h localhost -U postgres -d timedeposit_test -c "GRANT ALL PRIVILEGES ON DATABASE timedeposit_test TO mohammedmohaidat;"
+          PGPASSWORD=postgres psql -h localhost -U postgres -d timedeposit_test -c "ALTER USER mohammedmohaidat CREATEDB;"  # Updated to .NET 9
 
       - name: Cache NuGet packages
         uses: actions/cache@v4
@@ -122,6 +132,8 @@ jobs:
         env:
           ASPNETCORE_ENVIRONMENT: Testing
           ASPNETCORE_URLS: http://localhost:5000
+          # Use the custom user your app expects
+          ConnectionStrings__DefaultConnection: "Host=localhost;Database=timedeposit_test;Username=mohammedmohaidat;Password=test_password"
 
       - name: Verify application is running
         run: |
