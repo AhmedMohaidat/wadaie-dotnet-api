@@ -13,18 +13,20 @@ jobs:
     runs-on: ubuntu-latest
 
     services:
-     postgres:
-       image: postgres:13
-       env:
-         POSTGRES_PASSWORD: postgres
-         POSTGRES_DB: testdb
-       options: >-
-         --health-cmd pg_isready
-         --health-interval 10s
-         --health-timeout 5s
-         --health-retries 5
-       ports:
-         - 5432:5432
+      # PostgreSQL service for TimeDepositAPI
+      postgres:
+        image: postgres:13
+        env:
+          POSTGRES_USER: mohammedmohaidat
+          POSTGRES_PASSWORD: test_password
+          POSTGRES_DB: timedeposit_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
 
     steps:
       - name: Checkout code
@@ -47,7 +49,13 @@ jobs:
         run: dotnet restore
 
       - name: Build application
-        run: dotnet build --no-restore --configuration Release
+        run: |
+          echo "📁 Current directory structure:"
+          ls -la
+          echo "🔍 Looking for .csproj files:"
+          find . -name "*.csproj" -type f
+          echo "📦 Building application..."
+          dotnet build --no-restore --configuration Release
 
       - name: Run unit tests
         run: |
@@ -70,6 +78,13 @@ jobs:
           name: published-app
           path: ./publish/
           retention-days: 1
+
+      - name: Run database migrations
+        run: |
+          echo "Running database migrations..."
+          dotnet ef database update --project TimeDepositAPI.csproj
+        env:
+          ConnectionStrings__DefaultConnection: "Host=localhost;Database=timedeposit_test;Username=mohammedmohaidat;Password=test_password"
 
       - name: Start .NET application
         run: |
@@ -99,6 +114,8 @@ jobs:
         env:
           ASPNETCORE_ENVIRONMENT: Development
           ASPNETCORE_URLS: http://localhost:5000
+          # PostgreSQL connection string for GitHub Actions
+          ConnectionStrings__DefaultConnection: "Host=localhost;Database=timedeposit_test;Username=mohammedmohaidat;Password=test_password"
 
       - name: Verify application is running
         run: |
